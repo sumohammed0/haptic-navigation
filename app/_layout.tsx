@@ -57,6 +57,7 @@ function RootLayoutNav() {
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="calibration" options={{ title: 'Indoor Navigation Calibration' }} />
           <Stack.Screen name="stages/red-dot" options={{ title: 'Red Dot Task' }} />
           <Stack.Screen name="break" options={{ title: 'Break' }} />
           <Stack.Screen name="stages/object-search" options={{ title: 'Object Search' }} />
