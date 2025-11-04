@@ -9,7 +9,7 @@ export type Participant = {
   createdAt: number;
 };
 
-export type FeedbackMode = 'audio' | 'static_haptic' | 'dynamic_haptic';
+export type FeedbackMode = 'audio' | 'static_haptic' | 'dynamic_haptic' | 'step_based';
 
 /**
  * Indoor navigation waypoint/calibration point.
@@ -26,6 +26,8 @@ export type NavigationWaypoint = {
   direction: string;
   /** Optional: Heading in degrees the user should face (0-360) */
   targetHeading?: number;
+  /** Number of steps required to reach the next waypoint from this one */
+  stepCountToNext?: number;
   /** Timestamp when waypoint was logged */
   createdAt: number;
 };
@@ -59,6 +61,8 @@ export type NavigationState = {
   feedbackMode?: FeedbackMode;
   /** Whether user has reached the current waypoint */
   reachedCurrentWaypoint: boolean;
+  /** Current step count for the current segment */
+  currentStepCount: number;
 };
 
 export type Session = {
@@ -122,6 +126,7 @@ type AppContextValue = {
   advanceToNextWaypoint: () => void;
   markWaypointReached: () => void;
   getCurrentWaypoint: () => NavigationWaypoint | undefined;
+  incrementStepCount: () => void;
 };
 
 const AppContext = createContext<AppContextValue | undefined>(undefined);
@@ -135,6 +140,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     currentWaypointIndex: 0,
     isActive: false,
     reachedCurrentWaypoint: false,
+    currentStepCount: 0,
   });
   const [settings, setSettings] = useState<{ useTrueNorth: boolean; alignThresholdDeg: number; targetLat?: number; targetLon?: number; hasCalibrated?: boolean; calibrationPrompted?: boolean }>({ useTrueNorth: true, alignThresholdDeg: 10, hasCalibrated: false, calibrationPrompted: false });
 
@@ -259,6 +265,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isActive: true,
         feedbackMode,
         reachedCurrentWaypoint: false,
+        currentStepCount: 0,
       });
     },
     [routes]
@@ -269,6 +276,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev,
       isActive: false,
       reachedCurrentWaypoint: false,
+      currentStepCount: 0,
     }));
   }, []);
 
@@ -290,6 +298,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...prev,
         currentWaypointIndex: nextIndex,
         reachedCurrentWaypoint: false,
+        currentStepCount: 0,
       };
     });
   }, [routes]);
@@ -307,6 +316,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!route) return undefined;
     return route.waypoints[navigationState.currentWaypointIndex];
   }, [navigationState, routes]);
+
+  const incrementStepCount: AppContextValue['incrementStepCount'] = useCallback(() => {
+    setNavigationState((prev) => ({
+      ...prev,
+      currentStepCount: prev.currentStepCount + 1,
+    }));
+  }, []);
 
   const value = useMemo<AppContextValue>(
     () => ({
@@ -331,6 +347,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       advanceToNextWaypoint,
       markWaypointReached,
       getCurrentWaypoint,
+      incrementStepCount,
     }),
     [
       participants,
@@ -354,6 +371,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       advanceToNextWaypoint,
       markWaypointReached,
       getCurrentWaypoint,
+      incrementStepCount,
     ]
   );
 

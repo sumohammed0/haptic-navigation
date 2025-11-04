@@ -89,6 +89,27 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="step-navigation"
+        options={{
+          title: 'Step Navigation',
+          tabBarIcon: ({ color }) => <TabBarIcon name="hand-pointer-o" color={color} />,
+          headerRight: () => (
+            <Link href="/settings" asChild>
+              <Pressable>
+                {({ pressed }) => (
+                  <FontAwesome
+                    name="cog"
+                    size={22}
+                    color={Colors[colorScheme ?? 'light'].text}
+                    style={{ marginRight: 15, opacity: pressed ? 0.5 : 1 }}
+                  />
+                )}
+              </Pressable>
+            </Link>
+          ),
+        }}
+      />
     </Tabs>
   );
 }

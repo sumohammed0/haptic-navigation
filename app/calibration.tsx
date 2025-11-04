@@ -32,6 +32,7 @@ export default function CalibrationScreen() {
   const [currentRouteId, setCurrentRouteId] = useState<string | undefined>();
   const [waypoints, setWaypoints] = useState<NavigationWaypoint[]>([]);
   const [directionInput, setDirectionInput] = useState('');
+  const [stepCountInput, setStepCountInput] = useState('');
   const [locationPermission, setLocationPermission] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
   const headingRef = useRef<number | null>(null);
   const headingSubRef = useRef<Location.LocationSubscription | null>(null);
@@ -109,17 +110,26 @@ export default function CalibrationScreen() {
       return;
     }
 
+    // Parse step count (optional, but recommended)
+    const stepCount = stepCountInput.trim() ? parseInt(stepCountInput.trim(), 10) : undefined;
+    if (stepCountInput.trim() && (stepCount === undefined || isNaN(stepCount) || stepCount < 0)) {
+      Alert.alert('Error', 'Step count must be a positive number');
+      return;
+    }
+
     const newWaypoint: NavigationWaypoint = {
       waypointId: generateUuidV4(),
       order: waypoints.length,
       direction: directionInput.trim(),
       targetHeading: headingRef.current ?? undefined,
+      stepCountToNext: stepCount,
       createdAt: Date.now(),
     };
 
     const updatedWaypoints = [...waypoints, newWaypoint];
     setWaypoints(updatedWaypoints);
     setDirectionInput('');
+    setStepCountInput('');
     
     // Update route immediately
     updateRoute(currentRouteId, {
@@ -147,6 +157,7 @@ export default function CalibrationScreen() {
     setTaskType(undefined);
     setWaypoints([]);
     setDirectionInput('');
+    setStepCountInput('');
   };
 
   return (
@@ -229,6 +240,19 @@ export default function CalibrationScreen() {
           multiline
         />
 
+        <Text style={styles.label}>Step Count to Next Point</Text>
+        <Text style={[styles.instruction, { fontSize: 12, opacity: 0.7 }]}>
+          Count the number of steps from this location to the next waypoint. The user will tap the screen once per step.
+        </Text>
+        <TextInput
+          style={styles.input}
+          value={stepCountInput}
+          onChangeText={setStepCountInput}
+          placeholder="e.g., 15"
+          placeholderTextColor="#9CA3AF"
+          keyboardType="number-pad"
+        />
+
         <Text style={styles.info}>
           Current heading: {headingRef.current?.toFixed(0) ?? '—'}° (optional - used for alignment-based navigation)
         </Text>
@@ -261,6 +285,11 @@ export default function CalibrationScreen() {
                   {waypoint.targetHeading !== undefined && (
                     <Text style={styles.waypointHeading}>
                       Heading: {waypoint.targetHeading.toFixed(0)}°
+                    </Text>
+                  )}
+                  {waypoint.stepCountToNext !== undefined && (
+                    <Text style={styles.waypointHeading}>
+                      Steps to next: {waypoint.stepCountToNext}
                     </Text>
                   )}
                 </View>

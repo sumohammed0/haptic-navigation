@@ -98,6 +98,9 @@ export default function ResearcherScreen() {
       case 'dynamic_haptic':
         router.push('/(tabs)/haptic-dynamic');
         break;
+      case 'step_based':
+        router.push('/(tabs)/step-navigation');
+        break;
     }
   };
 
@@ -187,6 +190,11 @@ export default function ResearcherScreen() {
             value="dynamic_haptic"
             onSelect={setSelectedMode}
           />
+          <ModeButton
+            current={selectedMode}
+            value="step_based"
+            onSelect={setSelectedMode}
+          />
         </View>
       </View>
 
@@ -259,6 +267,7 @@ function ModeButton({
     audio: 'Audio directions',
     static_haptic: 'Fixed vibration patterns',
     dynamic_haptic: 'Variable vibration intensity',
+    step_based: 'Tap-to-step with direction validation',
   };
 
   return (
