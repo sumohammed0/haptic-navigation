@@ -26,7 +26,10 @@ export type NavigationWaypoint = {
   direction: string;
   /** Optional: Heading in degrees the user should face (0-360) */
   targetHeading?: number;
-  /** Number of steps required to reach the next waypoint from this one */
+  /** Target location coordinates (latitude, longitude) for GPS-based continuous navigation */
+  targetLatitude?: number;
+  targetLongitude?: number;
+  /** Number of steps required to reach the next waypoint from this one (deprecated - now using continuous navigation) */
   stepCountToNext?: number;
   /** Timestamp when waypoint was logged */
   createdAt: number;

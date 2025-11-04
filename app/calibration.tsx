@@ -34,15 +34,27 @@ export default function CalibrationScreen() {
   const [directionInput, setDirectionInput] = useState('');
   const [stepCountInput, setStepCountInput] = useState('');
   const [locationPermission, setLocationPermission] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
+  const [currentLocation, setCurrentLocation] = useState<Location.LocationObject | null>(null);
   const headingRef = useRef<number | null>(null);
   const headingSubRef = useRef<Location.LocationSubscription | null>(null);
 
-  // Request location permissions and start heading updates
+  // Request location permissions and start heading/location updates
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       setLocationPermission(status);
       if (status === 'granted') {
+        // Get current location
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          setCurrentLocation(loc);
+        } catch (error) {
+          console.warn('Could not get location:', error);
+        }
+
+        // Start heading updates
         headingSubRef.current = await Location.watchHeadingAsync((h) => {
           headingRef.current = h.trueHeading ?? h.magHeading ?? null;
         });
@@ -117,11 +129,21 @@ export default function CalibrationScreen() {
       return;
     }
 
+    // Capture current location for GPS-based navigation
+    let targetLat: number | undefined;
+    let targetLon: number | undefined;
+    if (currentLocation?.coords) {
+      targetLat = currentLocation.coords.latitude;
+      targetLon = currentLocation.coords.longitude;
+    }
+
     const newWaypoint: NavigationWaypoint = {
       waypointId: generateUuidV4(),
       order: waypoints.length,
       direction: directionInput.trim(),
       targetHeading: headingRef.current ?? undefined,
+      targetLatitude: targetLat,
+      targetLongitude: targetLon,
       stepCountToNext: stepCount,
       createdAt: Date.now(),
     };
@@ -240,18 +262,38 @@ export default function CalibrationScreen() {
           multiline
         />
 
-        <Text style={styles.label}>Step Count to Next Point</Text>
+        <Text style={styles.label}>Target Location (Optional)</Text>
         <Text style={[styles.instruction, { fontSize: 12, opacity: 0.7 }]}>
-          Count the number of steps from this location to the next waypoint. The user will tap the screen once per step.
+          GPS coordinates are captured for reference only. Navigation uses compass heading. 
+          The heading below is what guides the user - make sure it's accurate when you log the point.
         </Text>
-        <TextInput
-          style={styles.input}
-          value={stepCountInput}
-          onChangeText={setStepCountInput}
-          placeholder="e.g., 15"
-          placeholderTextColor="#9CA3AF"
-          keyboardType="number-pad"
-        />
+        {currentLocation?.coords && (
+          <Text style={styles.info}>
+            Current location: {currentLocation.coords.latitude.toFixed(6)}, {currentLocation.coords.longitude.toFixed(6)}
+          </Text>
+        )}
+        {!currentLocation?.coords && locationPermission === 'granted' && (
+          <Text style={[styles.info, { color: '#f59e0b' }]}>
+            Location not available. Try refreshing location.
+          </Text>
+        )}
+        <TouchableOpacity
+          onPress={async () => {
+            if (locationPermission === 'granted') {
+              try {
+                const loc = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.Balanced,
+                });
+                setCurrentLocation(loc);
+              } catch (error) {
+                Alert.alert('Error', 'Could not get location. Make sure GPS is enabled.');
+              }
+            }
+          }}
+          style={[styles.button, styles.buttonSecondary, { marginTop: 8 }]}
+        >
+          <Text style={styles.buttonTextSecondary}>Refresh Location</Text>
+        </TouchableOpacity>
 
         <Text style={styles.info}>
           Current heading: {headingRef.current?.toFixed(0) ?? '—'}° (optional - used for alignment-based navigation)
@@ -287,9 +329,9 @@ export default function CalibrationScreen() {
                       Heading: {waypoint.targetHeading.toFixed(0)}°
                     </Text>
                   )}
-                  {waypoint.stepCountToNext !== undefined && (
+                  {waypoint.targetLatitude !== undefined && waypoint.targetLongitude !== undefined && (
                     <Text style={styles.waypointHeading}>
-                      Steps to next: {waypoint.stepCountToNext}
+                      GPS: {waypoint.targetLatitude.toFixed(6)}, {waypoint.targetLongitude.toFixed(6)}
                     </Text>
                   )}
                 </View>

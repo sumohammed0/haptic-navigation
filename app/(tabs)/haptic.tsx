@@ -1,25 +1,27 @@
 /**
- * Static Haptic Navigation Mode Screen
+ * Static Haptic Navigation Mode Screen (Continuous)
  * 
- * Provides fixed vibration patterns to indicate navigation direction.
- * Vibration indicates when user is aligned with the target heading.
+ * Provides continuous vibration when user is facing the correct direction.
+ * Unlike rigid waypoint navigation, this allows users to explore at their own pace
+ * while receiving constant haptic feedback about direction.
  * 
  * Features:
- * - Fixed vibration pattern when aligned (continuous vibration)
+ * - Continuous vibration when aligned with target direction
  * - No vibration when not aligned
- * - Works with step-by-step waypoint navigation
- * - No user interaction required (hands-free operation)
+ * - Works with GPS-based or heading-based targets
+ * - Allows user to explore environment freely
+ * - Researcher can manually advance waypoints when user reaches target
  * 
  * Usage:
  * - Researcher starts navigation from researcher screen
  * - User is blindfolded and handed the phone
- * - Continuous vibration indicates correct alignment
- * - Vibration stops when user turns away from target direction
+ * - Continuous vibration indicates correct direction
+ * - Vibration stops when user turns away from target
  */
 
 import { Text, View } from '@/components/Themed';
 import { useApp } from '@/context/AppContext';
-import { useIndoorNavigation } from '@/hooks/useIndoorNavigation';
+import { useHeadingBasedNavigation } from '@/hooks/useHeadingBasedNavigation';
 import { useIsFocused } from '@react-navigation/native';
 import React, { useEffect, useRef } from 'react';
 import { StyleSheet, Vibration } from 'react-native';
@@ -27,10 +29,10 @@ import { StyleSheet, Vibration } from 'react-native';
 export default function HapticNavigationScreen() {
   const { navigationState, settings } = useApp();
   const isFocused = useIsFocused();
-  const alignment = useIndoorNavigation(settings.alignThresholdDeg);
+  const nav = useHeadingBasedNavigation(settings.alignThresholdDeg);
   
   const vibratingRef = useRef<boolean>(false);
-  const wasAlignedRef = useRef<boolean>(false);
+  const lastTargetIndexRef = useRef<number>(-1);
 
   // Stop vibration when screen loses focus or navigation stops
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function HapticNavigationScreen() {
         Vibration.cancel();
         vibratingRef.current = false;
       }
-      wasAlignedRef.current = false;
+      lastTargetIndexRef.current = -1;
     }
     return () => {
       if (vibratingRef.current) {
@@ -51,51 +53,54 @@ export default function HapticNavigationScreen() {
 
   // Control vibration based on alignment
   useEffect(() => {
-    if (!navigationState.isActive || !alignment.isActive || !alignment.targetHeading) {
-      // No target heading or not active - stop vibration
+    if (!navigationState.isActive || !nav.isActive) {
+      // Not active - stop vibration
       if (vibratingRef.current) {
         Vibration.cancel();
         vibratingRef.current = false;
       }
-      wasAlignedRef.current = false;
       return;
     }
 
     // Static haptic: continuous vibration when aligned, none when not aligned
-    if (alignment.isAligned) {
+    if (nav.isAligned && nav.targetHeading !== null) {
+      // User is aligned - start continuous vibration
       if (!vibratingRef.current) {
         // Start continuous vibration: pattern [0ms wait, 200ms vibrate, 50ms pause] repeated
         Vibration.vibrate([0, 200, 50], true);
         vibratingRef.current = true;
-        wasAlignedRef.current = true;
       }
     } else {
       // Not aligned - stop vibration
       if (vibratingRef.current) {
         Vibration.cancel();
         vibratingRef.current = false;
-        wasAlignedRef.current = false;
       }
     }
   }, [
-    alignment.isAligned,
-    alignment.targetHeading,
+    nav.isAligned,
+    nav.targetHeading,
+    nav.bearingToTarget,
     navigationState.isActive,
-    alignment.isActive,
+    nav.isActive,
   ]);
 
-  // Provide a brief vibration pulse when waypoint changes (if not already vibrating)
+  // Provide a brief vibration pulse when target changes
   useEffect(() => {
     if (
       navigationState.isActive &&
-      alignment.isActive &&
-      alignment.direction &&
-      !vibratingRef.current
+      nav.isActive &&
+      nav.targetIndex !== lastTargetIndexRef.current &&
+      lastTargetIndexRef.current >= 0
     ) {
-      // Brief pulse to indicate new waypoint (if not aligned yet)
+      // Target changed - brief pulse to indicate new target
       Vibration.vibrate(100);
+      lastTargetIndexRef.current = nav.targetIndex;
+    } else if (nav.targetIndex !== lastTargetIndexRef.current && lastTargetIndexRef.current === -1) {
+      // First target
+      lastTargetIndexRef.current = nav.targetIndex;
     }
-  }, [alignment.waypointIndex, navigationState.isActive, alignment.isActive, alignment.direction]);
+  }, [nav.targetIndex, navigationState.isActive, nav.isActive]);
 
   if (!navigationState.isActive) {
     return (
@@ -119,39 +124,50 @@ export default function HapticNavigationScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Static Haptic Navigation</Text>
       
-      {alignment.isActive && (
+      {nav.isActive && (
         <>
           <View style={styles.statusSection}>
             <Text style={styles.statusText}>
-              Step {alignment.waypointIndex + 1} of {alignment.totalWaypoints}
+              Target {nav.targetIndex + 1} of {nav.totalTargets}
             </Text>
-            <Text style={styles.directionText}>{alignment.direction}</Text>
+            <Text style={styles.directionText}>{nav.direction}</Text>
           </View>
 
-          {alignment.targetHeading !== null && (
+          {nav.hasMoved && (
+            <View style={styles.infoSection}>
+              <Text style={styles.infoLabel}>Movement:</Text>
+              <Text style={styles.infoValue}>
+                {nav.movementConfidence > 0.7 ? 'Detected (High)' : nav.movementConfidence > 0.4 ? 'Detected (Moderate)' : 'None'}
+              </Text>
+            </View>
+          )}
+
+          {nav.targetHeading !== null && (
             <View style={styles.infoSection}>
               <Text style={styles.infoLabel}>Current Heading:</Text>
               <Text style={styles.infoValue}>
-                {alignment.currentHeading?.toFixed(0) ?? '—'}°
+                {nav.currentHeading?.toFixed(0) ?? '—'}°
               </Text>
               <Text style={styles.infoLabel}>Target Heading:</Text>
-              <Text style={styles.infoValue}>{alignment.targetHeading.toFixed(0)}°</Text>
-              {alignment.alignmentError !== null && (
+              <Text style={styles.infoValue}>
+                {nav.targetHeading.toFixed(0)}°
+              </Text>
+              {nav.alignmentError !== null && (
                 <>
                   <Text style={styles.infoLabel}>Alignment Error:</Text>
                   <Text style={styles.infoValue}>
-                    {alignment.alignmentError > 0 ? '+' : ''}
-                    {alignment.alignmentError.toFixed(0)}°
+                    {nav.alignmentError > 0 ? '+' : ''}
+                    {nav.alignmentError.toFixed(0)}°
                   </Text>
                   <View style={styles.vibrationIndicator}>
                     <Text style={styles.infoLabel}>Vibration Status:</Text>
                     <Text
                       style={[
                         styles.vibrationBadge,
-                        alignment.isAligned && styles.vibrationBadgeActive,
+                        nav.isAligned && styles.vibrationBadgeActive,
                       ]}
                     >
-                      {alignment.isAligned ? 'Vibrating ✓' : 'Not Vibrating'}
+                      {nav.isAligned ? 'Vibrating ✓' : 'Not Vibrating'}
                     </Text>
                   </View>
                 </>
@@ -159,22 +175,16 @@ export default function HapticNavigationScreen() {
             </View>
           )}
 
-          {alignment.isFinalWaypoint && (
-            <Text style={styles.finalWaypointText}>Final waypoint</Text>
+          {nav.isFinalTarget && (
+            <Text style={styles.finalWaypointText}>Final target</Text>
           )}
 
           <Text style={styles.instruction}>
-            {alignment.isAligned
-              ? 'You are aligned. Continue forward.'
-              : 'Turn until you feel continuous vibration.'}
+            Continuous vibration indicates you are facing the correct direction.
+            Turn until you feel vibration, then explore at your own pace.
           </Text>
         </>
       )}
-
-      {/* Hidden info for accessibility/debugging */}
-      <Text style={styles.hidden} accessibilityLabel="Navigation status">
-        {navigationState.isActive ? 'Navigation active' : 'Navigation inactive'}
-      </Text>
     </View>
   );
 }
@@ -237,6 +247,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  proximityText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10b981',
+    marginTop: 8,
+  },
   vibrationIndicator: {
     marginTop: 12,
     paddingTop: 12,
@@ -256,11 +272,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     opacity: 0.8,
     marginTop: 8,
-  },
-  hidden: {
-    position: 'absolute',
-    opacity: 0,
-    height: 0,
-    width: 0,
   },
 });

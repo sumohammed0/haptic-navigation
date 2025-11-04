@@ -1,39 +1,45 @@
 /**
- * Audio Navigation Mode Screen
+ * Audio Navigation Mode Screen (Continuous GPS-Based)
  * 
- * Provides step-by-step audio directions for indoor navigation.
- * Directions are given one after another as the user progresses through waypoints.
+ * Provides continuous audio directions guiding users towards target locations.
+ * Unlike rigid waypoint navigation, this allows users to explore at their own pace
+ * while receiving constant directional feedback.
  * 
  * Features:
- * - Audio-only feedback with spoken directions
- * - Step-by-step guidance through waypoint sequence
- * - Alignment feedback when target heading is specified
- * - Automatic progression through waypoints
- * - No user interaction required (hands-free operation)
+ * - Continuous GPS-based direction guidance towards target
+ * - Real-time audio feedback about direction and distance
+ * - Allows user to explore environment freely
+ * - No automatic waypoint advancement - user controls pace
+ * - Researcher can manually advance waypoints when user reaches target
  * 
  * Usage:
  * - Researcher starts navigation from researcher screen
  * - User is blindfolded and handed the phone
- * - Audio cues guide user step by step automatically
+ * - Audio continuously guides user towards target location
+ * - User can explore and feel their environment
  */
 
 import { Text, View } from '@/components/Themed';
 import { useApp } from '@/context/AppContext';
-import { useIndoorNavigation } from '@/hooks/useIndoorNavigation';
+import { useHeadingBasedNavigation } from '@/hooks/useHeadingBasedNavigation';
 import { useIsFocused } from '@react-navigation/native';
 import * as Speech from 'expo-speech';
 import React, { useEffect, useRef } from 'react';
 import { StyleSheet } from 'react-native';
 
+const DIRECTION_FEEDBACK_INTERVAL = 3000; // ms - how often to provide direction feedback
+const DISTANCE_FEEDBACK_INTERVAL = 5000; // ms - how often to provide distance feedback
+const PROXIMITY_ANNOUNCEMENT_DISTANCE = 5; // meters - announce when close to target
+
 export default function AudioNavigationScreen() {
   const { navigationState, settings } = useApp();
   const isFocused = useIsFocused();
-  const alignment = useIndoorNavigation(settings.alignThresholdDeg);
+  const nav = useHeadingBasedNavigation(settings.alignThresholdDeg);
   
   const lastSpokenRef = useRef<number>(0);
   const lastDirectionRef = useRef<string>('');
-  const lastWaypointIndexRef = useRef<number>(-1);
-  const isInitialWaypointRef = useRef<boolean>(true);
+  const lastTargetIndexRef = useRef<number>(-1);
+  const isInitialTargetRef = useRef<boolean>(true);
 
   // Stop speech when screen loses focus
   useEffect(() => {
@@ -45,113 +51,121 @@ export default function AudioNavigationScreen() {
     };
   }, [isFocused]);
 
-  // Reset initial waypoint flag when navigation starts
+  // Reset initial target flag when navigation starts
   useEffect(() => {
-    if (navigationState.isActive && alignment.isActive) {
-      if (lastWaypointIndexRef.current === -1) {
-        // Navigation just started
-        isInitialWaypointRef.current = true;
+    if (navigationState.isActive && nav.isActive) {
+      if (lastTargetIndexRef.current === -1) {
+        isInitialTargetRef.current = true;
       }
     }
-  }, [navigationState.isActive, alignment.isActive]);
+  }, [navigationState.isActive, nav.isActive]);
 
-  // Announce new waypoint directions when waypoint changes
+  // Announce new target when it changes
   useEffect(() => {
-    if (!navigationState.isActive || !alignment.isActive || !alignment.direction) {
+    if (!navigationState.isActive || !nav.isActive || !nav.direction) {
       return;
     }
 
     const now = Date.now();
-    const waypointChanged = alignment.waypointIndex !== lastWaypointIndexRef.current;
+    const targetChanged = nav.targetIndex !== lastTargetIndexRef.current;
 
-    // Announce waypoint instruction when it changes
-    if (waypointChanged) {
-      // Wait a moment if we just spoke something
+    if (targetChanged && lastTargetIndexRef.current >= 0) {
+      // Target changed - announce new target
       const delay = now - lastSpokenRef.current < 1000 ? 800 : 0;
-
       setTimeout(() => {
-        let announcement: string;
-
-        if (isInitialWaypointRef.current) {
-          // First waypoint - just announce the direction
-          announcement = alignment.isFinalWaypoint
-            ? `${alignment.direction}.`
-            : `${alignment.direction}. Continue until you reach the next turn point.`;
-          isInitialWaypointRef.current = false;
-        } else {
-          // Subsequent waypoints - acknowledge turn point reached, then announce next direction
-          if (alignment.isFinalWaypoint) {
-            announcement = `You have reached a turn point. ${alignment.direction}.`;
-          } else {
-            announcement = `You have reached a turn point. Next direction: ${alignment.direction}. Continue until you reach the next turn point.`;
-          }
-        }
-
+        const announcement = nav.isFinalTarget
+          ? `New target: ${nav.direction}.`
+          : `New target: ${nav.direction}. Navigate towards this location.`;
         Speech.speak(announcement, { rate: 0.9 });
         lastSpokenRef.current = Date.now();
-        lastDirectionRef.current = alignment.direction;
-        lastWaypointIndexRef.current = alignment.waypointIndex;
+        lastTargetIndexRef.current = nav.targetIndex;
       }, delay);
+    } else if (targetChanged && lastTargetIndexRef.current === -1) {
+      // First target - announce immediately
+      const announcement = nav.isFinalTarget
+        ? `Navigate towards: ${nav.direction}.`
+        : `Navigate towards: ${nav.direction}. Follow the audio directions.`;
+      Speech.speak(announcement, { rate: 0.9 });
+      lastSpokenRef.current = Date.now();
+      lastTargetIndexRef.current = nav.targetIndex;
+      isInitialTargetRef.current = false;
     }
-  }, [alignment.direction, alignment.waypointIndex, alignment.totalWaypoints, alignment.isFinalWaypoint, navigationState.isActive, alignment.isActive]);
+  }, [nav.targetIndex, nav.direction, nav.isFinalTarget, navigationState.isActive, nav.isActive]);
 
-  // Provide alignment feedback when heading is available
+  // Continuous direction guidance
   useEffect(() => {
-    if (!navigationState.isActive || !alignment.isActive || !alignment.targetHeading) {
+    if (!navigationState.isActive || !nav.isActive) {
       return;
     }
 
-    // Don't provide alignment feedback immediately after waypoint announcement
     const now = Date.now();
-    if (now - lastSpokenRef.current < 3000) {
+    
+    // Don't provide feedback too frequently
+    if (now - lastSpokenRef.current < DIRECTION_FEEDBACK_INTERVAL) {
       return;
     }
 
-    // If aligned, confirm alignment periodically
-    if (alignment.isAligned && alignment.absoluteError !== null) {
-      if (alignment.absoluteError <= 5) {
-        // Well aligned - confirm periodically (every 5 seconds)
-        if (now - lastSpokenRef.current > 5000) {
-          Speech.speak('You are facing the correct direction. Continue forward.', { rate: 0.9 });
-          lastSpokenRef.current = now;
-        }
-      }
-    } else if (alignment.alignmentError !== null && alignment.absoluteError !== null) {
-      // Not aligned - provide correction feedback
-      const deg = Math.round(alignment.absoluteError);
-      const dir = alignment.alignmentError > 0 ? 'right' : 'left';
-      
-      // Provide feedback at intervals (every 3 seconds when misaligned)
-      if (now - lastSpokenRef.current > 3000) {
-        if (deg <= 15) {
+    // Provide directional guidance based on heading
+    if (nav.targetHeading !== null && nav.alignmentError !== null) {
+      // Heading-based guidance (no GPS)
+      const absErr = Math.abs(nav.alignmentError);
+      const dir = nav.alignmentError > 0 ? 'right' : 'left';
+
+      if (absErr > settings.alignThresholdDeg) {
+        if (absErr <= 15) {
           Speech.speak(`Turn slightly ${dir}`, { rate: 0.9 });
-        } else if (deg <= 45) {
-          Speech.speak(`Turn ${dir} ${deg} degrees`, { rate: 0.9 });
         } else {
-          Speech.speak(`Turn ${dir} ${deg} degrees to face the correct direction`, { rate: 0.9 });
+          Speech.speak(`Turn ${dir} ${Math.round(absErr)} degrees`, { rate: 0.9 });
         }
+        lastSpokenRef.current = now;
+      } else if (nav.isAligned) {
+        Speech.speak('You are facing the correct direction. Continue forward.', { rate: 0.9 });
         lastSpokenRef.current = now;
       }
     }
   }, [
-    alignment.isAligned,
-    alignment.alignmentError,
-    alignment.absoluteError,
-    alignment.targetHeading,
+    nav.bearingToTarget,
+    nav.alignmentError,
+    nav.isAligned,
+    nav.targetHeading,
     navigationState.isActive,
-    alignment.isActive,
+    nav.isActive,
+    settings.alignThresholdDeg,
   ]);
+
+  // Movement feedback - encourage user when they're moving in correct direction
+  useEffect(() => {
+    if (!navigationState.isActive || !nav.isActive) {
+      return;
+    }
+
+    const now = Date.now();
+    
+    // Provide movement encouragement periodically
+    if (now - lastSpokenRef.current < DISTANCE_FEEDBACK_INTERVAL) {
+      return;
+    }
+
+    if (nav.isAligned && nav.hasMoved && nav.alignedMovementTime > 5000) {
+      // User is aligned and has been moving - encourage
+      Speech.speak('You are moving in the correct direction. Continue forward.', { rate: 0.9 });
+      lastSpokenRef.current = now;
+    } else if (nav.hasMoved && nav.movementConfidence > 0.7 && !nav.isAligned) {
+      // User is moving but not aligned - remind about direction
+      if (nav.alignmentError !== null) {
+        const dir = nav.alignmentError > 0 ? 'right' : 'left';
+        Speech.speak(`You are moving, but turn ${dir} to face the correct direction.`, { rate: 0.9 });
+        lastSpokenRef.current = now;
+      }
+    }
+  }, [nav.isAligned, nav.hasMoved, nav.movementConfidence, nav.alignedMovementTime, nav.alignmentError, navigationState.isActive, nav.isActive]);
 
   // Announce navigation completion
   useEffect(() => {
-    if (!navigationState.isActive && lastWaypointIndexRef.current >= 0) {
-      // Navigation just ended - check if it was completed
-      const wasActive = lastWaypointIndexRef.current >= 0;
-      if (wasActive) {
-        Speech.speak('You have reached your destination. Navigation complete.', { rate: 0.9 });
-        lastWaypointIndexRef.current = -1;
-        isInitialWaypointRef.current = true;
-      }
+    if (!navigationState.isActive && lastTargetIndexRef.current >= 0) {
+      Speech.speak('Navigation has ended.', { rate: 0.9 });
+      lastTargetIndexRef.current = -1;
+      isInitialTargetRef.current = true;
     }
   }, [navigationState.isActive]);
 
@@ -173,54 +187,67 @@ export default function AudioNavigationScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Audio Navigation</Text>
       
-      {alignment.isActive && (
+      {nav.isActive && (
         <>
           <View style={styles.statusSection}>
             <Text style={styles.statusText}>
-              Step {alignment.waypointIndex + 1} of {alignment.totalWaypoints}
+              Target {nav.targetIndex + 1} of {nav.totalTargets}
             </Text>
-            <Text style={styles.directionText}>{alignment.direction}</Text>
+            <Text style={styles.directionText}>{nav.direction}</Text>
           </View>
 
-          {alignment.targetHeading !== null && (
+          {nav.hasMoved && (
+            <View style={styles.infoSection}>
+              <Text style={styles.infoLabel}>Movement Detected:</Text>
+              <Text style={styles.infoValue}>
+                {nav.movementConfidence > 0.7 ? 'High confidence' : nav.movementConfidence > 0.4 ? 'Moderate' : 'Low'}
+              </Text>
+              {nav.isAligned && nav.alignedMovementTime > 0 && (
+                <Text style={styles.proximityText}>
+                  Moving in correct direction for {Math.floor(nav.alignedMovementTime / 1000)}s
+                </Text>
+              )}
+            </View>
+          )}
+
+          {nav.targetHeading !== null && (
             <View style={styles.infoSection}>
               <Text style={styles.infoLabel}>Current Heading:</Text>
               <Text style={styles.infoValue}>
-                {alignment.currentHeading?.toFixed(0) ?? '—'}°
+                {nav.currentHeading?.toFixed(0) ?? '—'}°
               </Text>
               <Text style={styles.infoLabel}>Target Heading:</Text>
-              <Text style={styles.infoValue}>{alignment.targetHeading.toFixed(0)}°</Text>
-              {alignment.alignmentError !== null && (
+              <Text style={styles.infoValue}>{nav.targetHeading.toFixed(0)}°</Text>
+              {nav.alignmentError !== null && (
                 <>
                   <Text style={styles.infoLabel}>Alignment Error:</Text>
                   <Text style={styles.infoValue}>
-                    {alignment.alignmentError > 0 ? '+' : ''}
-                    {alignment.alignmentError.toFixed(0)}°
+                    {nav.alignmentError > 0 ? '+' : ''}
+                    {nav.alignmentError.toFixed(0)}°
                   </Text>
                   <Text style={styles.infoLabel}>Status:</Text>
                   <Text
                     style={[
                       styles.statusBadge,
-                      alignment.isAligned && styles.statusBadgeAligned,
+                      nav.isAligned && styles.statusBadgeAligned,
                     ]}
                   >
-                    {alignment.isAligned ? 'Aligned ✓' : 'Not Aligned'}
+                    {nav.isAligned ? 'Aligned ✓' : 'Not Aligned'}
                   </Text>
                 </>
               )}
             </View>
           )}
 
-          {alignment.isFinalWaypoint && (
-            <Text style={styles.finalWaypointText}>Final waypoint</Text>
+          {nav.isFinalTarget && (
+            <Text style={styles.finalWaypointText}>Final target</Text>
           )}
+
+          <Text style={styles.instruction}>
+            Audio will continuously guide you towards the target. Explore at your own pace.
+          </Text>
         </>
       )}
-
-      {/* Hidden info for accessibility/debugging */}
-      <Text style={styles.hidden} accessibilityLabel="Navigation status">
-        {navigationState.isActive ? 'Navigation active' : 'Navigation inactive'}
-      </Text>
     </View>
   );
 }
@@ -244,6 +271,12 @@ const styles = StyleSheet.create({
   info: {
     fontSize: 14,
     opacity: 0.7,
+    marginTop: 8,
+  },
+  instruction: {
+    fontSize: 14,
+    opacity: 0.8,
+    fontStyle: 'italic',
     marginTop: 8,
   },
   statusSection: {
@@ -277,6 +310,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  proximityText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10b981',
+    marginTop: 8,
+  },
   statusBadge: {
     fontSize: 16,
     fontWeight: '600',
@@ -291,11 +330,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     opacity: 0.8,
     marginTop: 8,
-  },
-  hidden: {
-    position: 'absolute',
-    opacity: 0,
-    height: 0,
-    width: 0,
   },
 });

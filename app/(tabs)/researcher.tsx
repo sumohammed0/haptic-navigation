@@ -32,6 +32,7 @@ export default function ResearcherScreen() {
     navigationState,
     startNavigation,
     stopNavigation,
+    advanceToNextWaypoint,
     addSession,
     exportCsv,
   } = useApp();
@@ -205,13 +206,23 @@ export default function ResearcherScreen() {
           <Text style={styles.statusText}>
             Mode: {navigationState.feedbackMode?.replace('_', ' ')}
             {'\n'}
-            Waypoint: {navigationState.currentWaypointIndex + 1}
+            Target: {navigationState.currentWaypointIndex + 1}
+            {'\n'}
+            {'\n'}
+            User can explore freely. Advance to next target when they reach the current one.
           </Text>
-          <Button
-            onPress={handleStopNavigation}
-            text="Stop Navigation"
-            variant="danger"
-          />
+          <View style={styles.buttonRow}>
+            <Button
+              onPress={advanceToNextWaypoint}
+              text="Advance to Next Target"
+              variant="secondary"
+            />
+            <Button
+              onPress={handleStopNavigation}
+              text="Stop Navigation"
+              variant="danger"
+            />
+          </View>
         </View>
       )}
 

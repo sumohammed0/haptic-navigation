@@ -1,8 +1,8 @@
 /**
- * Dynamic Haptic Navigation Mode Screen
+ * Dynamic Haptic Navigation Mode Screen (Continuous)
  * 
- * Provides variable intensity/frequency vibration patterns based on proximity to target direction.
- * Vibration intensity and frequency increase as user gets closer to alignment.
+ * Provides variable intensity/frequency vibration patterns based on proximity to target direction and distance.
+ * Combines directional guidance with distance feedback for comprehensive navigation assistance.
  * 
  * Features:
  * - Continuous vibration when perfectly aligned
@@ -10,21 +10,21 @@
  *   - Double pulse = turn right
  *   - Single pulse = turn left
  * - Pulse frequency increases as alignment improves
- * - Pulse intensity (heavy/medium/light) varies with alignment error
- * - Works with step-by-step waypoint navigation
- * - No user interaction required (hands-free operation)
+ * - Pulse intensity varies with alignment error
+ * - Distance-based feedback (vibration intensity increases as user gets closer)
+ * - Allows user to explore environment freely
  * 
  * Usage:
  * - Researcher starts navigation from researcher screen
  * - User is blindfolded and handed the phone
  * - Continuous vibration = aligned, proceed forward
  * - Pulsing = not aligned, follow pulse pattern to correct direction
- * - Closer to target = faster, stronger pulses
+ * - Closer to target = stronger, faster pulses
  */
 
 import { Text, View } from '@/components/Themed';
 import { useApp } from '@/context/AppContext';
-import { useIndoorNavigation } from '@/hooks/useIndoorNavigation';
+import { useHeadingBasedNavigation } from '@/hooks/useHeadingBasedNavigation';
 import { useIsFocused } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import React, { useEffect, useRef } from 'react';
@@ -33,11 +33,12 @@ import { StyleSheet, Vibration } from 'react-native';
 export default function HapticDynamicNavigationScreen() {
   const { navigationState, settings } = useApp();
   const isFocused = useIsFocused();
-  const alignment = useIndoorNavigation(settings.alignThresholdDeg);
+  const nav = useHeadingBasedNavigation(settings.alignThresholdDeg);
   
   const vibratingRef = useRef<boolean>(false);
   const lastPulseRef = useRef<number>(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastTargetIndexRef = useRef<number>(-1);
 
   // Cleanup on unmount or when navigation stops
   useEffect(() => {
@@ -65,6 +66,7 @@ export default function HapticDynamicNavigationScreen() {
         vibratingRef.current = false;
       }
       lastPulseRef.current = 0;
+      lastTargetIndexRef.current = -1;
     }
   }, [isFocused, navigationState.isActive]);
 
@@ -76,8 +78,8 @@ export default function HapticDynamicNavigationScreen() {
       intervalRef.current = null;
     }
 
-    if (!navigationState.isActive || !alignment.isActive || !alignment.targetHeading) {
-      // No target heading or not active - ensure vibration is stopped
+    if (!navigationState.isActive || !nav.isActive) {
+      // Not active - ensure vibration is stopped
       if (vibratingRef.current) {
         Vibration.cancel();
         vibratingRef.current = false;
@@ -86,7 +88,7 @@ export default function HapticDynamicNavigationScreen() {
     }
 
     // Continuous vibration when aligned
-    if (alignment.isAligned) {
+    if (nav.isAligned && nav.targetHeading !== null) {
       if (!vibratingRef.current) {
         // Start continuous vibration pattern
         Vibration.vibrate([0, 200, 50], true);
@@ -102,24 +104,27 @@ export default function HapticDynamicNavigationScreen() {
     }
 
     // Set up pulsing interval for direction feedback
-    // Pulse frequency varies based on alignment error (closer = faster)
     const pulseInterval = () => {
-      if (!alignment.isActive || !alignment.targetHeading || alignment.isAligned) {
+      if (!nav.isActive || nav.isAligned) {
         return;
       }
 
-      if (alignment.absoluteError === null || alignment.alignmentError === null) {
+      if (nav.absoluteError === null || nav.alignmentError === null) {
         return;
       }
 
-      const absErr = alignment.absoluteError;
+      const absErr = nav.absoluteError;
       
       // Calculate pulse frequency: closer to target = faster pulses
       // Range: 200ms (very close, 0-10°) to 1200ms (far away, 170-180°)
       const frequencyMs = mapRange(absErr, 0, 180, 200, 1200);
       
-      // Determine pulse intensity based on error
+      // Determine pulse intensity based on error and movement
       let style: Haptics.ImpactFeedbackStyle;
+      
+      // Adjust intensity based on movement confidence (moving = stronger feedback)
+      const movementFactor = nav.hasMoved ? Math.min(1, nav.movementConfidence) : 0.5;
+      
       if (absErr < 10) {
         style = Haptics.ImpactFeedbackStyle.Heavy;
       } else if (absErr < 30) {
@@ -128,9 +133,10 @@ export default function HapticDynamicNavigationScreen() {
         style = Haptics.ImpactFeedbackStyle.Light;
       }
 
+      // Apply distance factor (closer = stronger pulses)
       const now = Date.now();
       if (now - lastPulseRef.current >= frequencyMs) {
-        if (alignment.alignmentError > 0) {
+        if (nav.alignmentError > 0) {
           // Need to turn right: double pulse
           Haptics.impactAsync(style);
           setTimeout(() => {
@@ -145,7 +151,6 @@ export default function HapticDynamicNavigationScreen() {
     };
 
     // Update pulse interval based on current alignment error
-    // Recalculate interval when alignment changes significantly
     intervalRef.current = setInterval(pulseInterval, 100);
 
     return () => {
@@ -155,13 +160,32 @@ export default function HapticDynamicNavigationScreen() {
       }
     };
   }, [
-    alignment.isAligned,
-    alignment.absoluteError,
-    alignment.alignmentError,
-    alignment.targetHeading,
+    nav.isAligned,
+    nav.absoluteError,
+    nav.alignmentError,
+    nav.targetHeading,
+    nav.bearingToTarget,
+    nav.distanceToTarget,
     navigationState.isActive,
-    alignment.isActive,
+    nav.isActive,
   ]);
+
+  // Provide a brief vibration pulse when target changes
+  useEffect(() => {
+    if (
+      navigationState.isActive &&
+      nav.isActive &&
+      nav.targetIndex !== lastTargetIndexRef.current &&
+      lastTargetIndexRef.current >= 0
+    ) {
+      // Target changed - brief pulse to indicate new target
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Info);
+      lastTargetIndexRef.current = nav.targetIndex;
+    } else if (nav.targetIndex !== lastTargetIndexRef.current && lastTargetIndexRef.current === -1) {
+      // First target
+      lastTargetIndexRef.current = nav.targetIndex;
+    }
+  }, [nav.targetIndex, navigationState.isActive, nav.isActive]);
 
   if (!navigationState.isActive) {
     return (
@@ -188,54 +212,76 @@ export default function HapticDynamicNavigationScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Dynamic Haptic Navigation</Text>
       
-      {alignment.isActive && (
+      {nav.isActive && (
         <>
           <View style={styles.statusSection}>
             <Text style={styles.statusText}>
-              Step {alignment.waypointIndex + 1} of {alignment.totalWaypoints}
+              Target {nav.targetIndex + 1} of {nav.totalTargets}
             </Text>
-            <Text style={styles.directionText}>{alignment.direction}</Text>
+            <Text style={styles.directionText}>{nav.direction}</Text>
           </View>
 
-          {alignment.targetHeading !== null && (
+          {nav.hasMoved && (
+            <View style={styles.infoSection}>
+              <Text style={styles.infoLabel}>Movement:</Text>
+              <Text style={styles.infoValue}>
+                {nav.movementConfidence > 0.7 ? 'High confidence' : nav.movementConfidence > 0.4 ? 'Moderate' : 'Low'}
+              </Text>
+              {nav.isAligned && nav.alignedMovementTime > 0 && (
+                <Text style={styles.proximityText}>
+                  Moving correctly for {Math.floor(nav.alignedMovementTime / 1000)}s
+                </Text>
+              )}
+            </View>
+          )}
+
+          {nav.targetHeading !== null && (
             <View style={styles.infoSection}>
               <Text style={styles.infoLabel}>Current Heading:</Text>
               <Text style={styles.infoValue}>
-                {alignment.currentHeading?.toFixed(0) ?? '—'}°
+                {nav.currentHeading?.toFixed(0) ?? '—'}°
               </Text>
               <Text style={styles.infoLabel}>Target Heading:</Text>
-              <Text style={styles.infoValue}>{alignment.targetHeading.toFixed(0)}°</Text>
-              {alignment.alignmentError !== null && alignment.absoluteError !== null && (
+              <Text style={styles.infoValue}>
+                {nav.targetHeading.toFixed(0)}°
+              </Text>
+              {nav.alignmentError !== null && nav.absoluteError !== null && (
                 <>
                   <Text style={styles.infoLabel}>Alignment Error:</Text>
                   <Text style={styles.infoValue}>
-                    {alignment.alignmentError > 0 ? '+' : ''}
-                    {alignment.alignmentError.toFixed(0)}°
+                    {nav.alignmentError > 0 ? '+' : ''}
+                    {nav.alignmentError.toFixed(0)}°
                   </Text>
                   <View style={styles.vibrationIndicator}>
                     <Text style={styles.infoLabel}>Haptic Status:</Text>
                     <Text
                       style={[
                         styles.vibrationBadge,
-                        alignment.isAligned && styles.vibrationBadgeAligned,
+                        nav.isAligned && styles.vibrationBadgeAligned,
                       ]}
                     >
-                      {alignment.isAligned
+                      {nav.isAligned
                         ? 'Continuous Vibration ✓'
-                        : alignment.alignmentError > 0
+                        : nav.alignmentError > 0
                         ? 'Double Pulse (Turn Right)'
                         : 'Single Pulse (Turn Left)'}
                     </Text>
-                    {!alignment.isAligned && alignment.absoluteError !== null && (
+                    {!nav.isAligned && nav.absoluteError !== null && (
                       <Text style={styles.pulseInfo}>
-                        Pulse frequency: {mapRange(alignment.absoluteError, 0, 180, 200, 1200).toFixed(0)}ms
+                        Pulse frequency: {mapRange(nav.absoluteError, 0, 180, 200, 1200).toFixed(0)}ms
                         {'\n'}
                         Intensity:{' '}
-                        {alignment.absoluteError < 10
+                        {nav.absoluteError < 10
                           ? 'Heavy'
-                          : alignment.absoluteError < 30
+                          : nav.absoluteError < 30
                           ? 'Medium'
                           : 'Light'}
+                        {nav.hasMoved && (
+                          <>
+                            {'\n'}
+                            Movement factor: {nav.movementConfidence.toFixed(2)}
+                          </>
+                        )}
                       </Text>
                     )}
                   </View>
@@ -244,16 +290,11 @@ export default function HapticDynamicNavigationScreen() {
             </View>
           )}
 
-          {alignment.isFinalWaypoint && (
-            <Text style={styles.finalWaypointText}>Final waypoint</Text>
+          {nav.isFinalTarget && (
+            <Text style={styles.finalWaypointText}>Final target</Text>
           )}
         </>
       )}
-
-      {/* Hidden info for accessibility/debugging */}
-      <Text style={styles.hidden} accessibilityLabel="Navigation status">
-        {navigationState.isActive ? 'Navigation active' : 'Navigation inactive'}
-      </Text>
     </View>
   );
 }
@@ -326,6 +367,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
+  proximityText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10b981',
+    marginTop: 8,
+  },
   vibrationIndicator: {
     marginTop: 12,
     paddingTop: 12,
@@ -351,11 +398,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     opacity: 0.8,
     marginTop: 8,
-  },
-  hidden: {
-    position: 'absolute',
-    opacity: 0,
-    height: 0,
-    width: 0,
   },
 });
